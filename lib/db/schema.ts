@@ -1,0 +1,48 @@
+import type { UIMessage } from "ai"
+import { sql } from "drizzle-orm"
+import {
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core"
+
+export const games = pgTable(
+  "games",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    title: text("title").notNull(),
+    // The game's chat thread, in the `useChat` UI message format. One game has
+    // exactly one thread, so it is stored inline rather than in its own table.
+    messages: jsonb("messages")
+      .$type<UIMessage[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    // Trigger.dev chat session state for the thread above, written by the
+    // agent's `onTurnComplete` in the same statement as the messages. The
+    // cursor is what a reloading browser resumes an interrupted turn from, so
+    // it must never be written ahead of the messages it points past.
+    chatAccessToken: text("chat_access_token"),
+    chatLastEventId: text("chat_last_event_id"),
+    // The Daytona sandbox the game is built in, created on the thread's first
+    // turn. Null until then, and for games created before sandboxes existed.
+    sandboxId: text("sandbox_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .default(sql`now()`)
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    // Games are read newest first — without an org filter, that is the whole
+    // ordering story.
+    index("games_created_at_idx").on(table.createdAt.desc()),
+  ]
+)
+
+export type Game = typeof games.$inferSelect
+export type NewGame = typeof games.$inferInsert
