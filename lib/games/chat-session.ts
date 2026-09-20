@@ -11,7 +11,7 @@ import { describeError } from "@/lib/observability"
  * The session outlives the page, so deleting a game has to reach into
  * Trigger.dev as well as the database: a turn left streaming would keep calling
  * tools against a game that no longer exists, and — until the row is gone —
- * could still create a sandbox nothing points at.
+ * could still write to a bundle nothing points at.
  *
  * The cancel comes first because closing does not stop a run: it flips
  * `closedAt` so further messages are rejected, which settles the next turn and

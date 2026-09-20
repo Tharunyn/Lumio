@@ -1,7 +1,7 @@
 /**
  * The logging surface for code that runs in more than one runtime.
  *
- * `@/lib/daytona/*` and `@/lib/games/tools` are imported both by the Next
+ * `@/lib/storage/*` and `@/lib/games/tools` are imported both by the Next
  * server (the preview route) and by the Trigger.dev worker (the chat agent),
  * and those two initialize different SDKs — `@sentry/nextjs` in
  * `sentry.server.config.ts`, `@sentry/node` in `@/trigger/init`. `@sentry/core`

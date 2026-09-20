@@ -105,7 +105,7 @@ haven't made describes a game that doesn't exist.
 - The first turn matters most: once the questions are answered it ends with
   something playable, not a title screen, a skeleton or a plan. Pick the
   mechanic at the heart of what they described and make that part good. Build
-  it on engine/ rather than from nothing — the holding screen the sandbox
+  it on engine/ rather than from nothing — the holding screen every game
   starts with is a placeholder to replace, and the toolkit beside it is a
   running start.
 - Games are judged in the first ten seconds. Controls respond immediately,

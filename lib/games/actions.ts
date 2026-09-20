@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm"
 import { refresh } from "next/cache"
 import { redirect } from "next/navigation"
 
-import { deleteGameSandboxes } from "@/lib/daytona/utils"
+import { deleteGameBundle } from "@/lib/storage/bundles"
 import { db, games } from "@/lib/db"
 import { authorizeGame } from "@/lib/games/authorize"
 import { endGameChatSession } from "@/lib/games/chat-session"
@@ -186,22 +186,23 @@ export async function renameGame(gameId: string, title: string) {
 }
 
 /**
- * Deletes a game, everything Daytona is holding for it, and its chat session,
- * then returns to the home page.
+ * Deletes a game, its S3 bundle, and its chat session, then returns to the
+ * home page.
  *
  * The order is the whole of this function, and it is chosen so that no step can
- * leave a sandbox running that nothing will ever come back for:
+ * leave bundle objects behind that nothing will ever come back for:
  *
  *  1. End the chat session, so no turn is mid-flight when the row goes and
  *     none can start after it.
- *  2. Delete the sandboxes. This is the step allowed to fail the whole action:
+ *  2. Delete the bundle. This is the step allowed to fail the whole action:
  *     it throws, the row survives, and the player can try again — a game they
  *     can still see is the only handle a retry has.
- *  3. Delete the row. From here on nothing can make another sandbox for this
- *     game: `getGameSandbox` reads the row first and throws without one.
- *  4. Sweep once more. A tool that read the row just before step 3 could have
- *     created a sandbox after step 2 looked; the sweep is by label, so it finds
- *     that one too. Failing here is only logged — the game is already gone, so
+ *  3. Delete the row. From here on nothing can write another bundle for this
+ *     game: the file tools are shaped by the turn, not by the row, but a
+ *     canceled turn's last tool call may still be in flight.
+ *  4. Sweep once more. That mid-flight call could have written an object after
+ *     step 2 looked; the sweep takes the same bundle prefix, so it finds that
+ *     one too. Failing here is only logged — the game is already gone, so
  *     there is nothing left for the player to retry.
  *
  * `returnHome` is the caller saying whether the page it is on belongs to the
@@ -213,23 +214,22 @@ export async function renameGame(gameId: string, title: string) {
  */
 export async function deleteGame(gameId: string, returnHome: boolean) {
   const startedAt = performance.now()
-  const { game } = await authorizeGame(gameId, "deleteGame")
+  await authorizeGame(gameId, "deleteGame")
 
   await endGameChatSession(gameId)
 
-  const sandboxes = await deleteGameSandboxes(gameId, game.sandboxId)
+  const objects = await deleteGameBundle(gameId)
 
   await db.delete(games).where(eq(games.id, gameId))
 
   try {
-    await deleteGameSandboxes(gameId)
+    await deleteGameBundle(gameId)
   } catch (error) {
-    // Deliberately not rethrown, per the note above. The label search in
-    // `deleteGameSandboxes` is what an operator would run by hand to clean this
-    // up, and it has already logged the id of every sandbox that would not go.
+    // Deliberately not rethrown, per the note above. `deleteGameBundle` re-lists
+    // the prefix itself, which is what an operator would run by hand to clean
+    // this up, and it has already logged how many objects would not go.
     Sentry.logger.error(
-      Sentry.logger
-        .fmt`Could not sweep sandboxes after deleting game ${gameId}`,
+      Sentry.logger.fmt`Could not sweep the bundle after deleting game ${gameId}`,
       {
         "app.action": "deleteGame",
         "game.id": gameId,
@@ -240,11 +240,11 @@ export async function deleteGame(gameId: string, returnHome: boolean) {
 
   // The end of the funnel that starts with the create log above, and the only
   // record that this game existed once the row is gone — which is why it
-  // carries the sandbox count rather than leaving that to the Daytona log.
+  // carries the bundle object count rather than leaving that to the storage log.
   Sentry.logger.info(Sentry.logger.fmt`Deleted game ${gameId}`, {
     "app.action": "deleteGame",
     "game.id": gameId,
-    "sandbox.deleted": sandboxes,
+    "bundle.deleted": objects,
     duration_ms: elapsed(startedAt),
   })
 

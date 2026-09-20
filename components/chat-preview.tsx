@@ -56,26 +56,27 @@ function readError(data: unknown): GameError | null {
 /**
  * A url with its query and fragment dropped.
  *
- * Daytona signs the preview url and the signature rides in the query, so the
+ * CloudFront signs the preview url and the signature rides in the query, so the
  * urls coming back out of the frame are credentials as much as locations. Only
- * the path half of one belongs in a log that outlives the sandbox.
+ * the path half of one belongs in a log that outlives the url.
  */
 function withoutQuery(value: string) {
   return value.replace(/[?#][^\s)'"]*/g, "")
 }
 
 /**
- * The running game, embedded from its sandbox.
+ * The running game, embedded from CloudFront.
  *
- * The url can't be resolved on the server with the rest of the page: fetching
- * it starts the sandbox's server, which takes seconds on a cold sandbox and
- * would hold the whole chat behind it. So the panel mounts first and asks for
- * the url itself.
+ * The url can't be resolved on the server with the rest of the page: signing
+ * it there would be fine, but the panel already mounts before the page's own
+ * chat has settled, and keeping the signing behind the mount keeps the route
+ * to a signature rather than to anything stateful. So the panel mounts first
+ * and asks for the url itself.
  *
  * `revision` is bumped by whoever owns the thread every time a turn finishes,
  * and every value of it — including the first — is one load of the game. That
- * is the whole reload: the agent's edits land in the sandbox during the turn,
- * so the build to show is whatever is on disk when the turn ends.
+ * is the whole reload: the agent's edits land in the bundle during the turn,
+ * so the build to show is whatever is stored when the turn ends.
  *
  * Mounted under a `key` of the game id, so switching games remounts this with
  * fresh state instead of showing the previous game while the new url loads.
@@ -235,11 +236,12 @@ export function ChatPreview({
   return (
     <iframe
       ref={frameRef}
-      // Daytona signs a preview url per sandbox, not per build, so a reload
-      // normally hands the iframe the src it is already showing — and setting
-      // `src` to its current value is not a navigation. The revision keys the
-      // element instead, so React tears the old frame down and mounts a new
-      // one, which loads whatever the sandbox now serves.
+      // A signed url is deterministic — the same path, key and expiry sign to
+      // the same string — so two loads inside the same hour can hand the
+      // iframe the *identical* src, and setting `src` to its current value is
+      // not a navigation. The revision keys the element instead, so React
+      // tears the old frame down and mounts a new one, which loads whatever
+      // the bundle now holds.
       key={preview.revision}
       src={preview.url}
       title="Game preview"

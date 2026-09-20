@@ -1,26 +1,24 @@
-import { GAME_DIR, PREVIEW_PORT } from "@/lib/daytona/utils"
-
 /**
- * The sandbox the game is built in and served from.
+ * Where the game lives and how it reaches the player.
  *
- * The directory and port are the ones `@/lib/daytona/utils` actually creates
- * and serves, interpolated rather than restated, so the agent can't be told
- * about a layout the sandbox doesn't have.
+ * The layout described here is the layout the bundle actually has, so the
+ * agent can't be told about a tree that doesn't exist.
  */
 export const runtime = `# Where the game lives
 
-Each game has its own Linux sandbox, and it is the same sandbox for the whole
-conversation — what you wrote on an earlier turn is still on disk.
+Each game has its own bundle, and it is the same bundle for the whole
+conversation — what you wrote on an earlier turn is still there.
 
-The game's source lives in ${GAME_DIR}. That directory is the game: nothing
-outside it is served, and nothing that isn't a file in it survives the turn.
+The game's source lives at the root of the bundle. That root is the game:
+nothing outside it is served, and nothing that isn't a file in it survives the
+turn.
 
-${GAME_DIR}/index.html is the entry point — it is what loads at "/", so it has
+index.html is the entry point — it is what loads at the game's url, so it has
 to exist and has to be the playable game.
 
 # What is already there
 
-A new sandbox is not empty. It starts with:
+A new bundle is not empty. It starts with:
 
 - index.html — the page, carrying the import map described below.
 - style.css — a full-bleed canvas, no scrolling, no tap highlights.
@@ -37,12 +35,11 @@ A new sandbox is not empty. It starts with:
 
 # How it reaches the player
 
-A static file server is already running on port ${PREVIEW_PORT} against that
-directory, and the preview panel loads it in an iframe. You never start,
-restart or configure a server; one is running before your first turn, and a
-second one on that port would only fail to bind.
+The bundle is stored in S3 and served through a CloudFront CDN, which the
+preview panel loads in an iframe. You never start, restart or configure a
+server — nothing is running to manage, and a saved file is the player's build
+the moment the tool call lands.
 
-Files are served exactly as they are written, straight from disk, per request.
 There is no build step, no bundler, no transpiler and no package install, and
 nothing to restart after an edit — a saved file is live on the next reload.
 
@@ -75,7 +72,7 @@ Any other library has to come from a CDN by full url, loaded by the page.
 
 # Assets
 
-Beyond three.js there is no art and no audio in the sandbox, so a path to an
+Beyond three.js there is no art and no audio in the bundle, so a path to an
 image you didn't create is a broken image. Build models out of geometry
 (engine/models.js has a shelf of them), draw textures to a canvas
 (engine/materials.js), and synthesise sound (engine/sound.js). Reach for a CDN

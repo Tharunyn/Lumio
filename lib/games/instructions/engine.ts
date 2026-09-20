@@ -1,5 +1,5 @@
 /**
- * The 3D toolkit seeded into every sandbox, described for the agent.
+ * The 3D toolkit seeded into every game, described for the agent.
  *
  * A reference rather than a tutorial: the agent can read any of these files
  * with `read_file`, but it will only think to do that if it knows what is in
@@ -169,7 +169,7 @@ standard, matte, metal, glow (emissive; pair with bloom), flat (unlit), toon
 (cel shading), glass, wireframe, outline(mesh) — a dark backface shell, the
 cheapest good outline there is.
 
-There is no art in the sandbox, so textures are generated: checkerTexture,
+There is no art in the bundle, so textures are generated: checkerTexture,
 gridTexture, noiseTexture, gradientTexture, sparkTexture, textTexture, and
 skyGradient(scene, top, bottom) — one call, and the single clearest tell of an
 unfinished scene is gone.

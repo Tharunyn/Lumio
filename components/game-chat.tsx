@@ -19,14 +19,14 @@ export function GameChat({
   initialMessages,
   initialModelId,
   initialSession,
-  sandboxId,
+  hasBundle,
 }: {
   gameId: string
   initialMessages: UIMessage[]
   /** The model this thread opens on — see `GamePage` for where it comes from. */
   initialModelId: GameModelId
   initialSession?: ChatSessionPersistedState
-  sandboxId: string | null
+  hasBundle: boolean
 }) {
   // What the preview is showing, counted in finished turns. The panel loads
   // the game once per value, so bumping it is how a turn's edits reach the
@@ -34,17 +34,17 @@ export function GameChat({
   // just a new fetch.
   const [previewRevision, setPreviewRevision] = useState(0)
 
-  // The sandbox is created on the thread's first turn, so a game opened before
+  // The bundle is seeded on the thread's first turn, so a game opened before
   // then has nothing to preview — but by the time that turn finishes it does,
-  // and it holds the game the user just asked for. Server-rendered `sandboxId`
+  // and it holds the game the user just asked for. Server-rendered `hasBundle`
   // is therefore only the starting answer, not the standing one.
-  const [hasSandbox, setHasSandbox] = useState(sandboxId !== null)
+  const [hasBundleState, setHasBundleState] = useState(hasBundle)
 
   const router = useRouter()
 
   const handleTurnComplete = useCallback(() => {
     setPreviewRevision((revision) => revision + 1)
-    setHasSandbox(true)
+    setHasBundleState(true)
 
     // The turn just spent credits, and the sidebar that shows the balance is
     // rendered by the layout above this page — server-side, once, when the
@@ -74,7 +74,7 @@ export function GameChat({
   // The group is here even before there is anything to preview, so that the
   // thread keeps the same place in the tree throughout. Rendering it somewhere
   // else while the second panel is missing would unmount and remount it the
-  // moment the first turn produces a sandbox — and a remounted `ChatThread`
+  // moment the first turn produces a bundle — and a remounted `ChatThread`
   // rebuilds `useChat` from the props of the last *server* render, which still
   // end on the opening prompt. It would ask for a reply to a message the agent
   // has just finished answering, and that turn reaches the model as a thread
@@ -92,10 +92,10 @@ export function GameChat({
         >
           {thread}
         </ResizablePanel>
-        {/* The sandbox is created on the thread's first turn, so until then
+        {/* The bundle is seeded on the thread's first turn, so until then
             there is nothing to show beside it — and a handle against an empty
             panel is worse than no split at all. */}
-        {hasSandbox && (
+        {hasBundleState && (
           <>
             <ResizableHandle withHandle />
             <ResizablePanel

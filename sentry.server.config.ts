@@ -36,7 +36,7 @@ Sentry.init({
   // hook is the one place that actually stamps every log.
   //
   // It earns its keep because all four runtimes report into one Sentry project,
-  // and two of the modules that log — `@/lib/daytona/utils` and
+  // and two of the modules that log — `@/lib/storage/bundles` and
   // `@/lib/games/tools` — run in more than one of them, emitting the same
   // messages from each.
   beforeSendLog: (log) => {
