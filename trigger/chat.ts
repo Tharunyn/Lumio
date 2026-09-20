@@ -2,7 +2,6 @@ import { chat, upsertIncomingMessage } from "@trigger.dev/sdk/ai"
 import { stepCountIs, streamText } from "ai"
 import { z } from "zod"
 
-import { createGameSandbox } from "@/lib/daytona/utils"
 import { gameModelSettings } from "@/lib/games/agent"
 import {
   loadGameMessages,
@@ -12,6 +11,7 @@ import {
 import { gameInstructions } from "@/lib/games/instructions"
 import { DEFAULT_GAME_MODEL_ID, GAME_MODELS } from "@/lib/games/model-catalog"
 import { describeError, elapsed, logger } from "@/lib/observability"
+import { initGameBundle } from "@/lib/storage/bundles"
 import { createGameTools } from "@/lib/games/tools"
 
 // Everything the browser gets to say about a turn, which is the model to run it
@@ -81,19 +81,20 @@ export const gameChat = chat.agent({
 
     return stored
   },
-  // Fires once per game, on the first message of its thread — so the sandbox
-  // is created exactly once and is already seeded before `run` streams a reply.
+  // Fires once per game, on the first message of its thread — so the bundle is
+  // seeded exactly once and is already in S3 before `run` streams a reply.
   onChatStart: async ({ chatId }) => {
     try {
-      await createGameSandbox(chatId)
+      await initGameBundle(chatId)
     } catch (error) {
       // Fires exactly once per game, and everything the agent does afterwards
-      // needs what it builds. Failing here doesn't stop the turn — the tools
-      // fall back to creating a sandbox themselves — but it does mean the first
-      // turn pays that cost mid-stream, and it is the explanation for the
-      // `getGameSandbox` warning that follows.
+      // needs what it builds. Failing here doesn't stop the turn — the file
+      // tools write straight to S3 and work from an empty bundle — but it does
+      // mean the first turn discovers a game directory without the starter
+      // files, which is the explanation for the "The game directory is empty"
+      // that follows.
       logger.error(
-        logger.fmt`Could not create the sandbox for game ${chatId}`,
+        logger.fmt`Could not seed the bundle for game ${chatId}`,
         { "game.id": chatId, ...describeError(error) }
       )
 
@@ -132,7 +133,7 @@ export const gameChat = chat.agent({
         chatLastEventId: lastEventId,
       })
     } catch (error) {
-      // The turn's work is already in the sandbox by now; this is the write
+      // The turn's work is already in the bundle by now; this is the write
       // that makes it survive a reload. Losing it strands the thread on the
       // previous turn's cursor, which is the one failure here that the player
       // sees and the agent doesn't.
@@ -162,7 +163,7 @@ export const gameChat = chat.agent({
     })
   },
   // Resolved per turn rather than declared once, because the tools have to
-  // write into this game's sandbox: the chat id is the game id, so each turn's
+  // write into this game's bundle: the chat id is the game id, so each turn's
   // set is closed over the right one and the model never names a game itself.
   // Declared on the config and handed back to `streamText` below, rather than
   // only passed there: history re-converted at the top of a later turn needs

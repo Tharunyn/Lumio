@@ -12,7 +12,7 @@ import { getGame } from "@/lib/games/queries"
  * browser and is checked against the database rather than trusted. The app has
  * no accounts — anyone can act on any game in the shared workspace — so this
  * only verifies that the game exists and hands back the row, which callers
- * that need something on it (the sandbox a delete has to take with it) use
+ * that need something on it (the bundle a delete has to take with it) use
  * instead of reading it twice.
  */
 export async function authorizeGame(
@@ -37,7 +37,7 @@ export async function authorizeGame(
   // Tags rather than scope attributes, and for events rather than logs:
   // attributes set on a scope never reach logs, and the logs in the callers
   // name the game explicitly anyway. What this buys is that a throw further
-  // down — the Trigger handover, a sandbox that won't delete — arrives already
+  // down — the Trigger handover, a bundle that won't delete — arrives already
   // saying which game it was.
   Sentry.getIsolationScope().setTags({
     "app.action": action,

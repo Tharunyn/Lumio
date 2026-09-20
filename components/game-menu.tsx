@@ -42,7 +42,7 @@ import { TITLE_MAX_LENGTH } from "@/lib/games/title"
  *
  * Both go through a dialog rather than straight to the action. Renaming needs
  * one because it has something to collect; deleting needs one because it takes
- * the thread and the sandbox with it and there is no undo — hence an
+ * the thread and the bundle with it and there is no undo — hence an
  * `AlertDialog` for that one and a plain `Dialog` for the other.
  *
  * The title is a prop rather than state: every caller renders it from the row
@@ -208,7 +208,7 @@ export function GameMenu({
             </AlertDialogMedia>
             <AlertDialogTitle>Move “{title}” to trash?</AlertDialogTitle>
             <AlertDialogDescription>
-              The thread and the sandbox it was built in go with it. This cannot
+              The thread and the bundle it was built in go with it. This cannot
               be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

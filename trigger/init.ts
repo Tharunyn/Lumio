@@ -15,7 +15,7 @@ Sentry.init({
   dsn: process.env.SENTRY_DSN,
   defaultIntegrations: false,
 
-  // The worker shares `@/lib/daytona/utils` and `@/lib/games/tools` with the
+  // The worker shares `@/lib/storage/bundles` and `@/lib/games/tools` with the
   // Next server, and both log through `Sentry.logger`. Without this those calls
   // are silent no-ops on this side of the fence.
   enableLogs: true,
@@ -26,7 +26,7 @@ Sentry.init({
   //
   // The counterpart to `service.name: "sandbox-web"` in
   // sentry.server.config.ts — see the note there for why this is a
-  // `beforeSendLog` and not a scope attribute. It is what tells a sandbox
+  // `beforeSendLog` and not a scope attribute. It is what tells a storage
   // failure inside a chat turn apart from one behind a preview request, since
   // both run the same module.
   beforeSendLog: (log) => {

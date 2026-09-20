@@ -34,7 +34,9 @@ export default async function GamePage({
         gameId={game.id}
         initialMessages={game.messages}
         initialModelId={isGameModelId(model) ? model : DEFAULT_GAME_MODEL_ID}
-        sandboxId={game.sandboxId}
+        // The bundle is seeded on the thread's first turn, so this flips from
+        // false to true the first time the game's row gains one.
+        hasBundle={game.bundleInitializedAt !== null}
         // The chat session the last turn persisted. Absent until a game has had
         // one, and the token may already have expired — the transport refreshes
         // it through the mint action on a 401.

@@ -163,10 +163,10 @@ export function ChatThread({
     resume: Boolean(initialSession),
     // The end of the agent's stream is the end of its turn, so this is where
     // the browser learns that `onTurnComplete` has run on the other side and
-    // the sandbox now holds the build the turn produced.
+    // the bundle now holds the build the turn produced.
     //
     // Called however the turn ended. A turn stopped halfway, or one that died
-    // on an error, still leaves every file it wrote on disk — that is what the
+    // on an error, still leaves every file it wrote stored — that is what the
     // player is running now, so it is what the preview should show.
     onFinish: onTurnComplete,
     // A turn that dies — the run failing, the transport losing the stream,
@@ -287,7 +287,7 @@ export function ChatThread({
                             }
 
                             // The one tool the player answers rather than
-                            // the sandbox: it gets a question card, not a
+                            // the game: it gets a question card, not a
                             // line in the log.
                             if (
                               isToolUIPart(part) &&

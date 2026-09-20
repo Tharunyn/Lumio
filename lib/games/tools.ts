@@ -1,19 +1,23 @@
 import path from "node:path"
 
-import type { FileInfo, Sandbox } from "@daytona/sdk"
 import { tool } from "ai"
 import { z } from "zod"
 
-import { GAME_DIR, getGameSandbox } from "@/lib/daytona/utils"
 import { describeError, elapsed, logger } from "@/lib/observability"
+import {
+  deleteBundlePath,
+  listBundleFiles,
+  readBundleFile,
+  statBundlePath,
+  writeBundleFile,
+} from "@/lib/storage/bundles"
 
-// Every path the agent gives is resolved inside this directory, and the game
-// directory is the whole of what the agent can touch: it is what the static
-// server serves, so nothing outside it can reach the player anyway.
+// Every path the agent gives is resolved against the game directory, which is
+// the whole of what the agent can touch: it is what gets served to the player,
+// so nothing outside it can reach the player anyway.
 //
 // Paths are also restricted to this character set. It covers every filename a
-// browser game needs, and it keeps a path safe to interpolate into the one
-// shell command below without quoting games.
+// browser game needs, and it keeps a path safe to use as an S3 object key.
 const SAFE_PATH = /^[a-zA-Z0-9._/-]+$/
 
 // Big enough for any hand-written game file and small enough that a stray
@@ -35,7 +39,7 @@ const LIST_DEPTH = 5
  * statement of what an answer looks like.
  *
  * Static, so it is declared once here rather than built per game like the file
- * tools — nothing about it depends on which sandbox the answer lands in.
+ * tools — nothing about it depends on which game the answer lands in.
  */
 const askPlayer = tool({
   description:
@@ -98,46 +102,23 @@ const askPlayer = tool({
  * through, and `ask_player` for the questions it puts back to the player.
  *
  * Built per game rather than declared once, because every file call has to
- * land in *this* game's sandbox and the model never sees a game id — the id is
+ * land in *this* game's bundle and the model never sees a game id — the id is
  * closed over here instead of being an argument the model could get wrong.
+ *
+ * The bundle lives in S3, and the tools write straight to it — so a saved
+ * file *is* the player's build the moment the call lands, with nothing to
+ * sync, build or restart in between.
  *
  * Tools report expected failures — a missing file, a path outside the game
  * directory, an ambiguous edit — as ordinary results, so the model reads what
- * went wrong and fixes it on the next step. Anything else (a sandbox that
- * won't start, a network error) throws and fails the turn.
+ * went wrong and fixes it on the next step. Anything else (a storage failure,
+ * a network error) throws and fails the turn.
  */
 export function createGameTools(gameId: string) {
-  // One sandbox lookup per turn instead of one per call: `getGameSandbox`
-  // costs a query and a Daytona round-trip, and a turn is many edits. Only a
-  // resolved handle is kept — a failed lookup clears the cache so the next
-  // tool call retries rather than replaying the same rejection.
-  let pending: Promise<Sandbox> | undefined
-
-  const sandbox = () => {
-    pending ??= getGameSandbox(gameId)
-      .then(({ sandbox }) => sandbox)
-      .catch((error: unknown) => {
-        pending = undefined
-
-        // Every tool call in the turn is waiting on this one promise, so a
-        // failure here fails the whole turn rather than one edit. It is logged
-        // at the point it happens because the rethrow reaches each caller
-        // separately and would otherwise read as several unrelated failures.
-        logger.error(logger.fmt`Could not get a sandbox for game ${gameId}`, {
-          "game.id": gameId,
-          ...describeError(error),
-        })
-
-        throw error
-      })
-
-    return pending
-  }
-
   return {
     read_file: tool({
       description:
-        "Read a file from the game directory. Read a file before editing it — what is on disk is what the player is running, including everything written on earlier turns.",
+        "Read a file from the game directory. Read a file before editing it — what is stored is what the player is running, including everything written on earlier turns.",
       inputSchema: z.object({
         path: z
           .string()
@@ -147,25 +128,22 @@ export function createGameTools(gameId: string) {
       }),
       execute: ({ path: filePath }) =>
         expected("read_file", gameId, filePath, async () => {
-          const target = resolveGamePath(filePath)
-          const box = await sandbox()
-          const info = await statFile(box, target)
+          const relPath = resolveGamePath(filePath)
+          const info = await statBundlePath(gameId, relPath)
 
           if (!info) {
-            return `No file at ${relative(target)}.`
+            return `No file at ${relPath}.`
           }
 
-          if (info.isDir) {
-            return `${relative(target)} is a directory. Use list_files to see what is in it.`
+          if (info.kind === "directory") {
+            return `${relPath} is a directory. Use list_files to see what is in it.`
           }
 
           if (info.size > MAX_FILE_BYTES) {
-            return `${relative(target)} is ${info.size} bytes, over the ${MAX_FILE_BYTES} byte read limit. Split it into smaller modules.`
+            return `${relPath} is ${info.size} bytes, over the ${MAX_FILE_BYTES} byte read limit. Split it into smaller modules.`
           }
 
-          const content = await box.fs.downloadFile(target)
-
-          return content.toString("utf8")
+          return readBundleFile(gameId, relPath)
         }),
     }),
 
@@ -184,25 +162,15 @@ export function createGameTools(gameId: string) {
       }),
       execute: ({ path: filePath, content }) =>
         expected("write_file", gameId, filePath, async () => {
-          const target = resolveGamePath(filePath)
+          const relPath = resolveGamePath(filePath)
 
           if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) {
             return `That content is over the ${MAX_FILE_BYTES} byte write limit. Split the file into smaller modules.`
           }
 
-          const box = await sandbox()
-          const directory = path.posix.dirname(target)
+          await writeBundleFile(gameId, relPath, content)
 
-          // `uploadFile` won't create the parent, and `createFolder` fails on
-          // one that already exists — `mkdir -p` covers both, and the path is
-          // known safe to interpolate by `resolveGamePath`.
-          if (directory !== GAME_DIR) {
-            await box.process.executeCommand(`mkdir -p '${directory}'`)
-          }
-
-          await box.fs.uploadFile(Buffer.from(content, "utf8"), target)
-
-          return `Wrote ${relative(target)} (${lineCount(content)} lines).`
+          return `Wrote ${relPath} (${lineCount(content)} lines).`
         }),
     }),
 
@@ -232,24 +200,27 @@ export function createGameTools(gameId: string) {
       }),
       execute: ({ path: filePath, find, replace, replace_all: replaceAll }) =>
         expected("replace_text", gameId, filePath, async () => {
-          const target = resolveGamePath(filePath)
+          const relPath = resolveGamePath(filePath)
 
           if (find === "") {
             return "find cannot be empty — pass the exact text to replace."
           }
 
-          const box = await sandbox()
-          const info = await statFile(box, target)
+          const info = await statBundlePath(gameId, relPath)
 
-          if (!info || info.isDir) {
-            return `No file at ${relative(target)}.`
+          if (!info) {
+            return `No file at ${relPath}.`
+          }
+
+          if (info.kind === "directory") {
+            return `${relPath} is a directory. Use list_files to see what is in it.`
           }
 
           if (info.size > MAX_FILE_BYTES) {
-            return `${relative(target)} is ${info.size} bytes, over the ${MAX_FILE_BYTES} byte limit. Split it into smaller modules.`
+            return `${relPath} is ${info.size} bytes, over the ${MAX_FILE_BYTES} byte limit. Split it into smaller modules.`
           }
 
-          const content = (await box.fs.downloadFile(target)).toString("utf8")
+          const content = await readBundleFile(gameId, relPath)
           // Splitting on the literal counts occurrences and does the
           // replacement in one pass, with none of `String.replace`'s
           // interpretation of `$&` and friends in the replacement.
@@ -257,20 +228,20 @@ export function createGameTools(gameId: string) {
           const occurrences = parts.length - 1
 
           if (occurrences === 0) {
-            return `That text isn't in ${relative(target)}. Read the file and copy the snippet exactly, including indentation.`
+            return `That text isn't in ${relPath}. Read the file and copy the snippet exactly, including indentation.`
           }
 
           if (occurrences > 1 && !replaceAll) {
-            return `That text appears ${occurrences} times in ${relative(target)}. Include the surrounding lines to pick one out, or set replace_all to change them all.`
+            return `That text appears ${occurrences} times in ${relPath}. Include the surrounding lines to pick one out, or set replace_all to change them all.`
           }
 
           const updated = replaceAll
             ? parts.join(replace)
             : content.replace(find, () => replace)
 
-          await box.fs.uploadFile(Buffer.from(updated, "utf8"), target)
+          await writeBundleFile(gameId, relPath, updated)
 
-          return `Replaced ${occurrences === 1 ? "1 occurrence" : `${occurrences} occurrences`} in ${relative(target)}.`
+          return `Replaced ${occurrences === 1 ? "1 occurrence" : `${occurrences} occurrences`} in ${relPath}.`
         }),
     }),
 
@@ -287,28 +258,14 @@ export function createGameTools(gameId: string) {
       }),
       execute: ({ path: filePath }) =>
         expected("list_files", gameId, filePath, async () => {
-          const target = resolveGamePath(filePath ?? ".", { allowRoot: true })
-          const box = await sandbox()
-
-          if (target !== GAME_DIR && !(await statFile(box, target))) {
-            return `No directory at ${relative(target)}.`
-          }
-
-          const entries = await box.fs.listFiles(target, { depth: LIST_DEPTH })
-          const files = entries
-            .filter((entry) => !entry.isDir)
-            // `path` is only guaranteed on a deep listing; a flat one gives
-            // names that have to be joined back onto the directory.
-            .map((entry) => ({
-              path: relative(entry.path ?? path.posix.join(target, entry.name)),
-              size: entry.size,
-            }))
-            .sort((a, b) => a.path.localeCompare(b.path))
+          const relPath = resolveGamePath(filePath ?? ".", { allowRoot: true })
+          const dir = relPath === "." ? undefined : relPath
+          const files = await listBundleFiles(gameId, dir, LIST_DEPTH)
 
           if (files.length === 0) {
-            return target === GAME_DIR
+            return dir === undefined
               ? "The game directory is empty."
-              : `${relative(target)} has no files in it.`
+              : `No directory at ${relPath}.`
           }
 
           return files
@@ -329,21 +286,16 @@ export function createGameTools(gameId: string) {
       }),
       execute: ({ path: filePath }) =>
         expected("delete_file", gameId, filePath, async () => {
-          const target = resolveGamePath(filePath)
-          const box = await sandbox()
-          const info = await statFile(box, target)
+          const relPath = resolveGamePath(filePath)
+          const result = await deleteBundlePath(gameId, relPath)
 
-          if (!info) {
-            return `No file at ${relative(target)}.`
+          if (!result) {
+            return `No file at ${relPath}.`
           }
 
-          // A directory needs `recursive` or the delete fails; the path is
-          // already known to be inside the game directory.
-          await box.fs.deleteFile(target, info.isDir)
-
-          return info.isDir
-            ? `Deleted ${relative(target)} and everything in it.`
-            : `Deleted ${relative(target)}.`
+          return result.kind === "file"
+            ? `Deleted ${relPath}.`
+            : `Deleted ${relPath} and everything in it.`
         }),
     }),
 
@@ -371,7 +323,7 @@ class ToolInputError extends Error {}
  * place worth logging them from: one wide event per call, carrying the tool,
  * the game, the path it was pointed at and what it cost. That record is the
  * agent's entire effect on a game — the chat thread shows what the model said
- * it did, and this shows what actually reached the sandbox.
+ * it did, and this shows what actually reached the bundle.
  *
  * The three outcomes are deliberately three levels. A refused call is a `warn`:
  * the model mis-called the tool and will read the message and correct itself,
@@ -434,12 +386,15 @@ async function expected(
 }
 
 /**
- * Turns a path from the model into an absolute path inside the game directory.
+ * Turns a path from the model into the bundle-relative path used for object
+ * keys.
  *
  * This is the only place a tool path becomes a real path, so it is also the
- * confinement: an absolute path, a `..` climb or a symlink-ish name all end up
- * measured against `GAME_DIR` here, and anything landing outside is refused
- * before it reaches the sandbox.
+ * confinement: an absolute path, a `..` climb or a symlink-ish name all end
+ * up measured against the game directory here, and anything landing outside
+ * is refused before it reaches storage. The `SAFE_PATH` check doubles as the
+ * object-key safety check — a key that passes it is printable, slash-separated
+ * and cannot collide with the `games/{gameId}/` namespace boundary.
  */
 function resolveGamePath(
   input: string,
@@ -457,45 +412,29 @@ function resolveGamePath(
     )
   }
 
-  const resolved = path.posix.resolve(GAME_DIR, trimmed)
+  // `a/../b` collapses to `b` and is fine — it stays inside. `../` at the
+  // start and anything absolute leave the game directory, so both are refused.
+  const normalized = path.posix.normalize(trimmed)
 
-  if (resolved !== GAME_DIR && !resolved.startsWith(`${GAME_DIR}/`)) {
+  if (
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.startsWith("/")
+  ) {
     throw new ToolInputError(
-      `"${trimmed}" is outside the game directory. Every path is relative to ${GAME_DIR} and has to stay inside it.`
+      `"${trimmed}" is outside the game directory. Every path is relative to the game directory and has to stay inside it.`
     )
   }
 
-  if (resolved === GAME_DIR && !allowRoot) {
+  const isRoot = normalized === "."
+
+  if (isRoot && !allowRoot) {
     throw new ToolInputError(
       "That is the game directory itself. Name a file inside it."
     )
   }
 
-  return resolved
-}
-
-/** A path as the agent wrote it — relative to the game directory. */
-function relative(fullPath: string): string {
-  return path.posix.relative(GAME_DIR, fullPath) || "."
-}
-
-/**
- * A path's metadata, or `null` if nothing is there.
- *
- * The toolbox has no "does this exist" call and answers a missing path with an
- * error, so a throw is how absence arrives. Every caller follows this with a
- * read, write or delete of the same path, which surfaces a genuine failure
- * (permissions, a dead sandbox) a moment later anyway.
- */
-async function statFile(
-  sandbox: Sandbox,
-  fullPath: string
-): Promise<FileInfo | null> {
-  try {
-    return await sandbox.fs.getFileDetails(fullPath)
-  } catch {
-    return null
-  }
+  return isRoot ? "." : normalized
 }
 
 function lineCount(content: string): number {

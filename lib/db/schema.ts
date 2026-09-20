@@ -26,9 +26,12 @@ export const games = pgTable(
     // it must never be written ahead of the messages it points past.
     chatAccessToken: text("chat_access_token"),
     chatLastEventId: text("chat_last_event_id"),
-    // The Daytona sandbox the game is built in, created on the thread's first
-    // turn. Null until then, and for games created before sandboxes existed.
-    sandboxId: text("sandbox_id"),
+    // When the game's bundle was first seeded into S3, on the thread's first
+    // turn. Null until then, and for games created before bundles existed —
+    // a game without a bundle has nothing to preview.
+    bundleInitializedAt: timestamp("bundle_initialized_at", {
+      withTimezone: true,
+    }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
